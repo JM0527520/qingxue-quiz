@@ -81,6 +81,13 @@ try{
     }else{
       for(const [id,result] of Object.entries(saved.practice.done))if(result.correct===false&&BY_ID.get(id).type!=='essay')saved.mistakes[id]={count:1,selected:[],fills:[],updatedAt:0};
     }
+    for(const [id,record] of Object.entries(saved.mistakes)){
+      const q=BY_ID.get(id);
+      if(q.type==='fill'&&record.fills.length===fillAnswers(q).length&&fillAnswers(q).every((answer,i)=>matchesFillAnswer(record.fills[i],answer))){
+        delete saved.mistakes[id];
+        if(saved.practice.done[id]?.correct===false)saved.practice.done[id]={correct:true};
+      }
+    }
     if(stored.lastOptions&&typeof stored.lastOptions==='object')saved.lastOptions=stored.lastOptions;
     if(stored.drafts&&typeof stored.drafts==='object')for(const [id,value] of Object.entries(stored.drafts))if(BY_ID.has(id)&&typeof value==='string')saved.drafts[id]=value;
   }
@@ -100,6 +107,14 @@ function scope(){return BANK.filter(q=>filter==='all'||q.type===filter);}
 function currentEntry(){return history[position];}
 function graded(q){return q.type!=='essay';}
 function fillAnswers(q){return q.answerText.split('；');}
+function fillAlternatives(answer){
+  const match=/^([零〇一二两三四五六七八九十百千万]+)（([0-9]+)）$/.exec(answer);
+  return match?[answer,match[1],match[2]]:[answer];
+}
+function matchesFillAnswer(input,answer){return fillAlternatives(answer).includes(input);}
+function fillRule(q){
+  return fillAnswers(q).some(answer=>fillAlternatives(answer).length>1)?'数字可填中文或阿拉伯数字，例如“五”或“5”；其他内容严格匹配，各空全对得1分。':'严格按原文作答：标点、括号、数字、空格都须一致；各空全对得1分。';
+}
 function mistakeQuestions(){return scope().filter(q=>Object.hasOwn(saved.mistakes,q.id));}
 function updateMistake(entry,correct){
   if(typeof correct!=='boolean')return;
@@ -165,7 +180,7 @@ function renderMistakeList(){
   const questions=mistakeQuestions().sort((a,b)=>saved.mistakes[b.id].updatedAt-saved.mistakes[a.id].updatedAt);
   $('question-card').innerHTML=`<h2 class="question-title" id="question-title" tabindex="-1">我的错题 · ${questions.length} 题</h2><p class="mistake-intro">点开题目，查看最近一次错误作答和正确答案。重做答对后会自动移出错题本，开始普通新一轮会保留错题。</p>${questions.length?`<div class="mistake-list">${questions.map(q=>{
     const record=saved.mistakes[q.id],entry={options:q.options};
-    return `<details class="mistake-item"><summary>${escapeHTML(q.text)}<span class="mistake-source">${TYPES[q.type]} · 作业${q.section}第${q.sourceNumber}题 · 累计答错${record.count}次</span></summary><div class="mistake-detail">${q.type==='fill'?'':`<h3>原题选项</h3>${q.options.map((o,i)=>`<div class="correct-answer-item"><b>${String.fromCharCode(65+i)}</b><span>${escapeHTML(o.text)}</span></div>`).join('')}`}<h3>最近一次错误作答</h3>${pastAnswerHTML(q,record)}<h3>正确答案${q.type==='fill'?' · 严格逐字匹配':''}</h3>${answersHTML(q,entry)}<button type="button" class="btn" data-retry-one="${q.id}">重做这道题 →</button></div></details>`;
+    return `<details class="mistake-item"><summary>${escapeHTML(q.text)}<span class="mistake-source">${TYPES[q.type]} · 作业${q.section}第${q.sourceNumber}题 · 累计答错${record.count}次</span></summary><div class="mistake-detail">${q.type==='fill'?'':`<h3>原题选项</h3>${q.options.map((o,i)=>`<div class="correct-answer-item"><b>${String.fromCharCode(65+i)}</b><span>${escapeHTML(o.text)}</span></div>`).join('')}`}<h3>最近一次错误作答</h3>${pastAnswerHTML(q,record)}<h3>正确答案${q.type==='fill'?' · 按题目规则匹配':''}</h3>${answersHTML(q,entry)}<button type="button" class="btn" data-retry-one="${q.id}">重做这道题 →</button></div></details>`;
   }).join('')}</div>`:`<div class="mistake-empty">${Object.keys(saved.mistakes).length?'当前题型没有错题，切换“全部题型”可查看其他错题。':'还没有待巩固的错题。答错的单选、多选、判断和填空题会自动加入这里。'}</div>`}`;
   document.querySelectorAll('[data-retry-one]').forEach(button=>button.addEventListener('click',()=>startMistakeRetry([button.dataset.retryOne])));
 }
@@ -232,7 +247,7 @@ function renderStats(){
 }
 function optionLetter(entry,id){return String.fromCharCode(65+entry.options.findIndex(o=>o.id===id));}
 function answersHTML(q,entry){
-  if(q.type==='fill')return fillAnswers(q).map((a,i)=>`<div class="correct-answer-item"><b>第${i+1}空</b><span>${escapeHTML(a)}</span></div>`).join('');
+  if(q.type==='fill')return fillAnswers(q).map((a,i)=>{const variants=fillAlternatives(a);return `<div class="correct-answer-item"><b>第${i+1}空</b><span>${escapeHTML(a)}${variants.length>1?`<br><small>可填写：${escapeHTML(variants.slice(1).join(' 或 '))}</small>`:''}</span></div>`;}).join('');
   if(q.type==='essay')return `<p class="answer-body">${escapeHTML(q.answerText)}</p>`;
   let html=entry.options.filter(o=>q.correct.includes(o.id)).map(o=>`<div class="correct-answer-item"><b>${optionLetter(entry,o.id)}</b><span>${escapeHTML(o.text)}</span></div>`).join('');
   if(q.type==='multi'&&(q.text.match(/[（(]\s*[)）]/g)||[]).length>1){
@@ -245,7 +260,7 @@ function answerPanel(q,entry){
   const style=mode==='study'||q.type==='essay'?'':entry.correct?'right':'wrong';
   let title=mode==='study'?'参考答案':q.type==='essay'?'参考答案 · 自行对照':entry.correct?'✓ 回答正确':'× 回答错误';
   if(mode==='practice'&&q.type!=='essay')title+=` · 本题 ${entry.correct?1:0} / 1 分`;
-  return `<section class="answer-panel ${style}" aria-label="答案反馈" role="status"><h3 class="answer-heading">${title}</h3>${mode==='practice'&&q.type!=='essay'?'<p class="answer-label">正确答案</p>':''}${answersHTML(q,entry)}${mode==='practice'&&q.type!=='essay'?`<p class="score-note">${entry.correct?'本题已掌握；如曾收录错题本，已自动移出。':'已加入错题本，可随时查看和重做。'}</p>`:''}${q.type==='fill'?'<p class="score-note">严格逐字匹配原文答案；各空全部正确，才得1分。</p>':q.type==='essay'?'<p class="score-note">本题不判分，可结合自己的思路理解与复述。</p>':''}</section>`;
+  return `<section class="answer-panel ${style}" aria-label="答案反馈" role="status"><h3 class="answer-heading">${title}</h3>${mode==='practice'&&q.type!=='essay'?'<p class="answer-label">正确答案</p>':''}${answersHTML(q,entry)}${mode==='practice'&&q.type!=='essay'?`<p class="score-note">${entry.correct?'本题已掌握；如曾收录错题本，已自动移出。':'已加入错题本，可随时查看和重做。'}</p>`:''}${q.type==='fill'?`<p class="score-note">${fillRule(q)}</p>`:q.type==='essay'?'<p class="score-note">本题不判分，可结合自己的思路理解与复述。</p>':''}</section>`;
 }
 function choiceHTML(q,entry){
   const locked=mode==='study'||entry.submitted;
@@ -258,14 +273,14 @@ function choiceHTML(q,entry){
 function fillHTML(q,entry){
   if(mode==='study')return '';
   return `<div class="fill-fields">${fillAnswers(q).map((answer,i)=>{
-    const right=entry.submitted&&entry.fills[i]===answer;
-    return `<div class="fill-row"><label for="fill-${i}">第 ${i+1} 空</label><input type="text" class="fill-input ${entry.submitted?(right?'right':'wrong'):''}" id="fill-${i}" data-fill="${i}" value="${escapeHTML(entry.fills[i])}" placeholder="请输入与原文完全一致的答案" autocomplete="off" spellcheck="false" ${entry.submitted?'disabled':''}>${entry.submitted?`<div class="fill-result ${right?'right':''}">${right?'✓ 本空正确':`× 本空错误，原文答案：${escapeHTML(answer)}`}</div>`:''}</div>`;
+    const right=entry.submitted&&matchesFillAnswer(entry.fills[i],answer);
+    return `<div class="fill-row"><label for="fill-${i}">第 ${i+1} 空</label><input type="text" class="fill-input ${entry.submitted?(right?'right':'wrong'):''}" id="fill-${i}" data-fill="${i}" value="${escapeHTML(entry.fills[i])}" placeholder="请输入答案，按上方规则填写" autocomplete="off" spellcheck="false" ${entry.submitted?'disabled':''}>${entry.submitted?`<div class="fill-result ${right?'right':''}">${right?'✓ 本空正确':`× 本空错误，原文答案：${escapeHTML(answer)}`}</div>`:''}</div>`;
   }).join('')}</div>`;
 }
 function questionTip(q){
   if(mode==='study')return '正确答案已标出，记住后再继续下一题。';
   if(q.type==='multi')return '请选择所有正确选项后提交。多选、少选或错选均不得分。';
-  if(q.type==='fill')return '严格按原文作答：标点、括号、数字、空格都须一致；各空全对得1分。';
+  if(q.type==='fill')return fillRule(q);
   if(q.type==='essay')return '先独立思考，准备好后再查看答案。本题不判分。';
   return '请选择一个答案后提交，答对得1分。';
 }
@@ -298,7 +313,7 @@ function mainAction(){
   else{
     if(q.type==='fill'){
       if(entry.fills.some(v=>v.length===0))return;
-      entry.correct=fillAnswers(q).every((answer,i)=>entry.fills[i]===answer);
+      entry.correct=fillAnswers(q).every((answer,i)=>matchesFillAnswer(entry.fills[i],answer));
     }else{
       if(!entry.selected.length)return;
       entry.correct=entry.selected.length===q.correct.length&&entry.selected.every(id=>q.correct.includes(id));
